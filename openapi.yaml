@@ -1,0 +1,298 @@
+openapi: 3.0.3
+info:
+  title: Zu Platform API
+  description: |
+    Enterprise SaaS Platform REST API.
+    
+    ## Authentication
+    All authenticated endpoints require a Bearer JWT token obtained via Clerk.
+    
+    ## Multi-tenancy
+    Every authenticated request is automatically scoped to the caller's tenant.
+    The `X-Tenant-ID` header can be used for machine-to-machine requests.
+    
+    ## Versioning
+    All endpoints are versioned under `/api/v1/`.
+  version: 1.0.0
+  contact:
+    name: Zu Platform Support
+    email: support@zuplatform.com
+
+servers:
+  - url: https://api.zuplatform.com/api/v1
+    description: Production
+  - url: http://localhost:4000/api/v1
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Tenant:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        slug:       { type: string }
+        plan:       { type: string, enum: [free, silver, gold, enterprise] }
+        subscriptionStatus:
+          type: string
+          enum: [trial, active, past_due, suspended, cancelled, expired]
+        userCount:          { type: integer }
+        storageUsedBytes:   { type: integer }
+        storageLimitBytes:  { type: integer }
+        createdAt:  { type: string, format: date-time }
+
+    User:
+      type: object
+      properties:
+        id:        { type: string, format: uuid }
+        email:     { type: string, format: email }
+        firstName: { type: string }
+        lastName:  { type: string }
+        role:      { type: string, enum: [super_admin, platform_manager, tenant_admin, standard_user, read_only] }
+        tenantId:  { type: string, format: uuid }
+        isActive:  { type: boolean }
+
+    Risk:
+      type: object
+      required: [title, description, likelihood, impact]
+      properties:
+        id:           { type: string, format: uuid }
+        title:        { type: string }
+        description:  { type: string }
+        likelihood:   { type: integer, minimum: 1, maximum: 5 }
+        impact:       { type: integer, minimum: 1, maximum: 5 }
+        riskScore:    { type: integer, readOnly: true }
+        severity:     { type: string, enum: [low, medium, high, critical], readOnly: true }
+        status:       { type: string, enum: [open, in_treatment, accepted, closed] }
+        ownerId:      { type: string, format: uuid, nullable: true }
+        treatmentPlan: { type: string, nullable: true }
+        dueDate:      { type: string, format: date-time, nullable: true }
+        tags:         { type: array, items: { type: string } }
+
+    Document:
+      type: object
+      required: [title]
+      properties:
+        id:             { type: string, format: uuid }
+        title:          { type: string }
+        content:        { type: string }
+        status:         { type: string, enum: [draft, active, archived] }
+        tags:           { type: array, items: { type: string } }
+        currentVersion: { type: integer }
+        createdAt:      { type: string, format: date-time }
+        updatedAt:      { type: string, format: date-time }
+
+    SignatureRequest:
+      type: object
+      properties:
+        id:           { type: string, format: uuid }
+        documentId:   { type: string, format: uuid }
+        title:        { type: string }
+        status:       { type: string, enum: [pending, in_progress, completed, cancelled, expired] }
+        signatories:
+          type: array
+          items:
+            type: object
+            properties:
+              email:  { type: string }
+              name:   { type: string }
+              order:  { type: integer }
+              status: { type: string, enum: [pending, viewed, signed, declined] }
+
+    GroupCard:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        title:          { type: string }
+        recipientName:  { type: string }
+        recipientEmail: { type: string }
+        category:       { type: string }
+        status:         { type: string, enum: [draft, collecting, scheduled, delivered] }
+        shareableLink:  { type: string }
+        contributionCount: { type: integer }
+
+    Error:
+      type: object
+      properties:
+        statusCode: { type: integer }
+        message:    { type: string }
+        errors:     { type: object }
+
+    PaginatedResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          type: object
+          properties:
+            page:       { type: integer }
+            perPage:    { type: integer }
+            total:      { type: integer }
+            totalPages: { type: integer }
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Platform health check
+      security: []
+      responses:
+        '200':
+          description: All services healthy
+
+  /tenants/me:
+    get:
+      tags: [tenants]
+      summary: Get current tenant
+      responses:
+        '200':
+          description: Current tenant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Tenant' }
+
+  /billing/plans:
+    get:
+      tags: [billing]
+      summary: Get public subscription plans
+      security: []
+      responses:
+        '200':
+          description: List of plans
+
+  /billing/subscription:
+    get:
+      tags: [billing]
+      summary: Get current subscription
+      responses:
+        '200':
+          description: Current subscription details
+
+  /isms/risks:
+    get:
+      tags: [isms]
+      summary: List risks in register
+      parameters:
+        - { name: status,   in: query, schema: { type: string } }
+        - { name: severity, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Risk list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Risk' }
+    post:
+      tags: [isms]
+      summary: Create a risk
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Risk' }
+      responses:
+        '201':
+          description: Created risk
+
+  /isms/risks/matrix:
+    get:
+      tags: [isms]
+      summary: Get risk matrix breakdown
+      responses:
+        '200':
+          description: Risk matrix by severity
+
+  /isms/controls/compliance/{framework}:
+    get:
+      tags: [isms]
+      summary: Get compliance summary for framework
+      parameters:
+        - { name: framework, in: path, required: true,
+            schema: { type: string, enum: [iso27001, cyber_essentials, gdpr] } }
+      responses:
+        '200':
+          description: Compliance summary
+
+  /zudoc/documents:
+    get:
+      tags: [zudoc]
+      summary: List documents
+      responses:
+        '200':
+          description: Document list
+    post:
+      tags: [zudoc]
+      summary: Create document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Document' }
+      responses:
+        '201':
+          description: Created document
+
+  /zudoc/signatures:
+    get:
+      tags: [zudoc]
+      summary: List signature requests
+      responses:
+        '200':
+          description: Signature request list
+    post:
+      tags: [zudoc]
+      summary: Create signature request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignatureRequest' }
+      responses:
+        '201':
+          description: Created signature request
+
+  /zucards/cards:
+    get:
+      tags: [zucards]
+      summary: List cards for tenant
+      responses:
+        '200':
+          description: Card list
+    post:
+      tags: [zucards]
+      summary: Create a group card
+      responses:
+        '201':
+          description: Created card
+
+  /zucards/contribute/{token}:
+    post:
+      tags: [zucards]
+      summary: Add contribution (public)
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contributorName: { type: string }
+                message: { type: string }
+      responses:
+        '201':
+          description: Contribution added
